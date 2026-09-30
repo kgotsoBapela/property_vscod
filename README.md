@@ -56,6 +56,7 @@ property, then Comparables, Report and Scenario. In the Sync center, queue an in
 | `npm run dev` | web app |
 | `npm run worker` | background worker (needs `DATABASE_URL`) |
 | `npm test` | all tests: analysis, identity matching, pipeline, **migrations + RLS on real PostgreSQL (PGlite)**, scheduler |
+| `npm run e2e` | browser tests (Playwright, demo mode, no Supabase needed): permission matrix per role and the end-to-end milestone. First run: `npx playwright install chromium` in `apps/web` |
 | `npm run typecheck` / `npm run lint` / `npm run build` | CI checks |
 
 ## Layout
