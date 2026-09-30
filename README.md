@@ -41,10 +41,10 @@ property, then Comparables, Report and Scenario. In the Sync center, queue an in
 4. Configure Supabase Auth (dashboard):
    - **URL Configuration:** Site URL = the app's origin (e.g. `http://localhost:3000`).
    - **Sign In / Providers:** disable "Allow new users to sign up" (invitation-only); keep Email enabled; TOTP MFA enabled.
-   - **Email templates:** email links must point at `/auth/confirm`, which asks the person to click *Continue* before the one-time
-     token is used (so corporate link scanners cannot consume it):
-     - *Invite user*: `<a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=invite">Accept the invitation</a>`
-     - *Reset password*: `<a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=recovery">Reset your password</a>`
+   - **Redirect URLs:** add `<origin>/auth/callback` exactly (no query string). Supabase's **default** email templates work as-is:
+     invitation and reset links return there and continue to *Set password*.
+   - **Email link scanners:** corporate scanners can open (and use up) emailed links. *Team & roles → Create a link to share*
+     sends no email and returns a one-time `/auth/confirm` link that is only used when the invitee clicks *Continue*.
    - **SMTP:** the built-in sender is heavily rate-limited; configure your own SMTP before real use.
 5. Run the worker: `DATABASE_URL=… npm run worker` (or `docker build -f apps/worker/Dockerfile .`).
 6. In the Sync center, run an **Auction refresh** and a **Provider incremental sync** on the fixture integration to load demo data.

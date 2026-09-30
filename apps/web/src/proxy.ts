@@ -21,8 +21,14 @@ export async function proxy(request: NextRequest) {
       },
     },
   });
-  const { data } = await supabase.auth.getUser();
   const path = request.nextUrl.pathname;
+  // If Supabase fell back to the Site URL with a PKCE code, forward it to the callback instead of dropping it.
+  if (request.nextUrl.searchParams.has("code") && path !== "/auth/callback") {
+    const target = new URL("/auth/callback", request.url);
+    target.search = request.nextUrl.search;
+    return NextResponse.redirect(target);
+  }
+  const { data } = await supabase.auth.getUser();
   const isPublic = ["/sign-in", "/forgot-password", "/reset-password", "/auth/"].some((p) => path.startsWith(p));
   if (!data.user && !isPublic && !path.startsWith("/api/")) {
     return NextResponse.redirect(new URL("/sign-in", request.url));

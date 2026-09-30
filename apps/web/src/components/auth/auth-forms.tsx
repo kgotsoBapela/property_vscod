@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Button, Input, Label } from "@/components/ui/primitives";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { rememberAuthNext } from "./auth-callback";
 
 function Field(props: React.ComponentProps<typeof Input> & { label: string }) {
   const { label, id, ...rest } = props;
@@ -21,6 +22,12 @@ export function SignInForm() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Invitation tokens arrive in the URL fragment, which survives the redirect to sign-in: hand them to the callback.
+  useEffect(() => {
+    if (/access_token=|error_description=/.test(window.location.hash)) router.replace(`/auth/callback${window.location.hash}`);
+  }, [router]);
+
   return (
     <form
       className="flex flex-col gap-4"
@@ -57,8 +64,10 @@ export function ForgotPasswordForm() {
       className="flex flex-col gap-4"
       onSubmit={async (e) => {
         e.preventDefault();
-        // The "Reset password" email template links to /auth/confirm (see README), so no redirectTo is needed.
-        await createSupabaseBrowserClient().auth.resetPasswordForEmail(email);
+        // Works with Supabase's default email template: the link returns to /auth/callback (must be an allowed
+        // Redirect URL, exactly, with no query string), which then continues to /reset-password.
+        rememberAuthNext("/reset-password");
+        await createSupabaseBrowserClient().auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/auth/callback` });
         setSent(true); // same message whether or not the account exists
       }}
     >
