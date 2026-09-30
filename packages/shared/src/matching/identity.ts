@@ -93,6 +93,10 @@ export function scoreCandidate(record: IdentityFacts, c: CanonicalCandidate): Ma
       confidence = Math.max(confidence, 0.6);
       evidence.push(`Same erf ${record.erf_number}; township missing on one side`);
     }
+  } else if (norm(record.erf_number) && norm(c.erf_number)) {
+    // Two different erf numbers are two different land parcels, whatever the street address says.
+    conflicts.push(`Different erf numbers (${record.erf_number} vs ${c.erf_number})`);
+    distinct = true;
   }
 
   // Address and geolocation are supporting evidence only.

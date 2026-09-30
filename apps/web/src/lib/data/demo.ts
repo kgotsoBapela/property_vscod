@@ -14,6 +14,7 @@ import {
   type Property,
   type SyncJob,
 } from "@propintel/shared";
+import { describeLegalIdentity } from "./review";
 import { rankProperties } from "./search";
 import {
   ConflictError,
@@ -22,6 +23,9 @@ import {
   type AuctionMatch,
   type DataRepository,
   type Overview,
+  type ReviewCandidate,
+  type ReviewDecision,
+  type ReviewQueueItem,
   type SyncScheduleRow,
 } from "./types";
 
@@ -404,24 +408,63 @@ export class DemoRepository implements DataRepository {
     await this.writeAudit(actor, "sync.cancel", id);
   }
 
-  async listReviewQueue() {
+  async listReviewQueue(): Promise<ReviewQueueItem[]> {
     const s = await ready();
-    const items = s.store.reviewQueue.filter((r) => r.status === "open").map((r) => ({ ...r }));
+    const candidate = (c: { property_id: string; confidence: number; evidence: string[]; conflicts: string[] }): ReviewCandidate => ({
+      ...c,
+      address: s.store.properties.get(c.property_id)?.normalized_address ?? null,
+      identifiers: identifiersFor(s, c.property_id).filter((i) => i.kind !== "provider_property_id"),
+    });
+    const items: ReviewQueueItem[] = s.store.reviewQueue
+      .filter((r) => r.status === "open")
+      .map((r) => ({
+        kind: "identity",
+        id: r.id,
+        created_at: r.created_at,
+        provider: r.provider,
+        external_id: r.external_id,
+        description: r.description,
+        record_identity: describeLegalIdentity(r.record),
+        reason: r.reason,
+        candidates: r.candidates.map(candidate),
+      }));
     // Ambiguous auction lots are review items too.
     for (const l of s.store.auctionLinks.filter((x) => x.review_status === "needs_review")) {
-      const a = [...s.store.auctions.entries()].find(([, v]) => v.id === l.auction_id);
+      const [key, a] = [...s.store.auctions.entries()].find(([, v]) => v.id === l.auction_id)!;
       items.push({
-        id: `lot-${l.auction_id}-${l.lot_number}`,
-        created_at: a?.[1].provenance.retrieved_at ?? "",
-        provider: a?.[1].provenance.provider ?? "",
-        external_id: a?.[0].split(":")[1] ?? "",
-        description: `Auction lot: ${l.described_address}`,
+        kind: "auction_lot",
+        id: `${l.auction_id}:${l.lot_index}`,
+        auction_id: l.auction_id,
+        lot_index: l.lot_index,
+        auction_title: a.title,
+        created_at: a.provenance.retrieved_at,
+        provider: a.provenance.provider,
+        external_id: key.split(":")[1] ?? "",
+        description: l.described_address,
+        record_identity: l.described_erf ? `Erf ${l.described_erf}` : null,
         reason: l.match_evidence[0] ?? "Needs review",
-        candidates: l.candidate_property_ids.map((pid) => ({ property_id: pid, confidence: l.match_confidence, evidence: l.match_evidence.slice(1), conflicts: [] })),
-        status: "open" as const,
+        candidates: l.candidate_property_ids.map((pid) =>
+          candidate({ property_id: pid, confidence: l.match_confidence, evidence: l.match_evidence.slice(1), conflicts: [] }),
+        ),
       });
     }
     return items;
+  }
+
+  async resolveReview(decision: ReviewDecision, actor: Actor): Promise<string | null> {
+    const s = await ready();
+    try {
+      if (decision.kind === "identity") {
+        const pid = await s.store.resolveIdentityReview(decision.id, decision.action, decision.property_id);
+        await this.writeAudit(actor, `identity_review.${decision.action}`, decision.id, { property_id: pid });
+        return pid;
+      }
+      s.store.resolveAuctionLot(decision.auction_id, decision.lot_index, decision.action, decision.property_id);
+      await this.writeAudit(actor, `auction_lot.${decision.action}`, `${decision.auction_id}:${decision.lot_index}`, { property_id: decision.property_id });
+      return decision.property_id;
+    } catch (e) {
+      throw new ConflictError(e instanceof Error ? e.message : String(e));
+    }
   }
 
   async listAuditLogs(actor: Actor, all: boolean) {

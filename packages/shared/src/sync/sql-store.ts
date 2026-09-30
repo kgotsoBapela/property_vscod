@@ -44,8 +44,12 @@ export class SqlSyncStore implements SyncStore {
   }
 
   async getSourceHash(provider: string, externalId: string) {
+    // Records awaiting identity review are re-evaluated on every sync, even when unchanged.
     const rows = await this.exec<{ content_hash: string }>(
-      "select content_hash from public.source_records where provider = $1 and external_id = $2",
+      `select s.content_hash from public.source_records s
+        where s.provider = $1 and s.external_id = $2
+          and not exists (select 1 from public.identity_review_queue q
+                           where q.provider = s.provider and q.external_id = s.external_id and q.status = 'open')`,
       [provider, externalId],
     );
     return rows[0]?.content_hash ?? null;

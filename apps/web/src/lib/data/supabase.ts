@@ -18,6 +18,7 @@ import {
   type SyncJobEvent,
 } from "@propintel/shared";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { describeLegalIdentity } from "./review";
 import { rankProperties } from "./search";
 import {
   ConflictError,
@@ -26,6 +27,9 @@ import {
   type AuctionMatch,
   type DataRepository,
   type Overview,
+  NotAllowedError,
+  type ReviewCandidate,
+  type ReviewDecision,
   type ReviewQueueItem,
   type SyncScheduleRow,
   type UserRow,
@@ -407,22 +411,87 @@ export class SupabaseRepository implements DataRepository {
     const db = await this.db;
     const [q, lots] = await Promise.all([
       db.from("identity_review_queue").select("*").eq("status", "open").order("created_at"),
-      db.from("auction_properties").select("*, auctions(external_id, provider, retrieved_at)").eq("review_status", "needs_review"),
+      db.from("auction_properties").select("*, auctions(title, external_id, provider, retrieved_at)").eq("review_status", "needs_review"),
     ]);
-    const items = ((must(q) as Row[]) ?? []).map((r) => r as unknown as ReviewQueueItem);
-    for (const l of (must(lots) as Row[]) ?? []) {
+    const queueRows = (must(q) as Row[]) ?? [];
+    const lotRows = (must(lots) as Row[]) ?? [];
+
+    // Load candidate properties and their legal identifiers in two queries.
+    type RawCandidate = { property_id: string; confidence: number; evidence?: string[]; conflicts?: string[] };
+    const ids = [
+      ...new Set([
+        ...queueRows.flatMap((r) => ((r.candidates as RawCandidate[]) ?? []).map((c) => c.property_id)),
+        ...lotRows.flatMap((l) => (l.candidate_property_ids as string[]) ?? []),
+      ]),
+    ];
+    const [props, idents] = ids.length
+      ? await Promise.all([
+          db.from("properties").select("id, normalized_address").in("id", ids),
+          db.from("property_identifiers").select("*").in("property_id", ids).neq("kind", "provider_property_id"),
+        ])
+      : [{ data: [] }, { data: [] }];
+    const address = new Map(((props.data ?? []) as Row[]).map((p) => [String(p.id), String(p.normalized_address)]));
+    const identRows = ((idents.data ?? []) as Row[]).map(toIdentifier);
+    const candidate = (c: RawCandidate): ReviewCandidate => ({
+      property_id: c.property_id,
+      confidence: Number(c.confidence),
+      evidence: c.evidence ?? [],
+      conflicts: c.conflicts ?? [],
+      address: address.get(c.property_id) ?? null,
+      identifiers: identRows.filter((i) => i.property_id === c.property_id),
+    });
+
+    const items: ReviewQueueItem[] = queueRows.map((r) => ({
+      kind: "identity",
+      id: String(r.id),
+      created_at: String(r.created_at),
+      provider: String(r.provider),
+      external_id: String(r.external_id),
+      description: String(r.description),
+      record_identity: r.record ? describeLegalIdentity(r.record as Record<string, string | null>) : null,
+      reason: String(r.reason),
+      candidates: ((r.candidates as RawCandidate[]) ?? []).map(candidate),
+    }));
+    for (const l of lotRows) {
       const a = l.auctions as Row;
+      const evidence = (l.match_evidence as string[]) ?? [];
       items.push({
-        id: String(l.id),
+        kind: "auction_lot",
+        id: `${l.auction_id}:${l.lot_index}`,
+        auction_id: String(l.auction_id),
+        lot_index: Number(l.lot_index),
+        auction_title: String(a.title),
         created_at: String(a.retrieved_at),
         provider: String(a.provider),
         external_id: String(a.external_id),
-        description: `Auction lot: ${l.described_address}`,
-        reason: ((l.match_evidence as string[]) ?? [])[0] ?? "Needs review",
-        candidates: ((l.candidate_property_ids as string[]) ?? []).map((pid) => ({ property_id: pid, confidence: Number(l.match_confidence), evidence: [], conflicts: [] })),
+        description: String(l.described_address),
+        record_identity: l.described_erf ? `Erf ${l.described_erf}` : null,
+        reason: evidence[0] ?? "Needs review",
+        candidates: ((l.candidate_property_ids as string[]) ?? []).map((pid) =>
+          candidate({ property_id: pid, confidence: Number(l.match_confidence), evidence: evidence.slice(1) }),
+        ),
       });
     }
     return items;
+  }
+
+  async resolveReview(decision: ReviewDecision): Promise<string | null> {
+    const db = await this.db;
+    // Role checks, the atomic commit and the audit entry happen inside the database functions.
+    const res =
+      decision.kind === "identity"
+        ? await db.rpc("resolve_identity_review", { p_review_id: decision.id, p_action: decision.action, p_property_id: decision.property_id })
+        : await db.rpc("resolve_auction_lot", {
+            p_auction_id: decision.auction_id,
+            p_lot_index: decision.lot_index,
+            p_action: decision.action,
+            p_property_id: decision.property_id,
+          });
+    if (res.error) {
+      if (res.error.code === "42501") throw new NotAllowedError(res.error.message);
+      throw new ConflictError(res.error.message);
+    }
+    return decision.kind === "identity" ? ((res.data as string | null) ?? null) : decision.property_id;
   }
 
   async listAuditLogs(actor: Actor, all: boolean) {

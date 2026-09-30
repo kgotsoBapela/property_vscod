@@ -14,7 +14,7 @@ Provider status: [`docs/provider-matrix.md`](docs/provider-matrix.md).
 |---|---|
 | 0 Discovery | Provider matrix and outreach checklist written; **no provider verified** (blocking Phase 2) |
 | 1 Foundation | Done: monorepo, Next.js UI, migrations, auth/RLS/roles, design system, CI |
-| 2–4 | Built end-to-end against the synthetic provider (identity resolution, history, comps, valuation, auctions, sheriffs) |
+| 2–4 | Built end-to-end against the synthetic provider (identity resolution with a reviewer queue, history, comps, valuation, auctions, sheriffs) |
 | 5 Background ops | Worker, queue, schedules, retries, checkpoints, cancellation, stale-job handling done; alert delivery (email/Slack) not yet |
 | 6 Hardening | Not started |
 
@@ -55,6 +55,7 @@ property, then Comparables, Report and Scenario. In the Sync center, queue an in
 |---|---|
 | `npm run dev` | web app |
 | `npm run worker` | background worker (needs `DATABASE_URL`) |
+| `npx tsx src/run-once.ts <scope> <provider>` (in `apps/worker`) | one sync job without the polling loop, e.g. `full_reconciliation fixture_demo` |
 | `npm test` | all tests: analysis, identity matching, pipeline, **migrations + RLS on real PostgreSQL (PGlite)**, scheduler |
 | `npm run e2e` | browser tests (Playwright, demo mode, no Supabase needed): permission matrix per role and the end-to-end milestone. First run: `npx playwright install chromium` in `apps/web` |
 | `npm run typecheck` / `npm run lint` / `npm run build` | CI checks |

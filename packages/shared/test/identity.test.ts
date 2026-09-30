@@ -50,6 +50,12 @@ describe("identity resolution", () => {
     expect(d.kind).toBe("new_property");
   });
 
+  it("treats different erf numbers at the same street address as different properties", () => {
+    const c: CanonicalCandidate = { ...blank, property_id: "p", address: "130 testing drive sample heights", erf_number: "142", township: "T", latitude: -26.1, longitude: 28.05 };
+    const d = resolveIdentity({ ...blank, address: "130 Testing Drive, Sample Heights", erf_number: "450", township: "T", latitude: -26.1, longitude: 28.05 }, [c]);
+    expect(d.kind).toBe("new_property");
+  });
+
   it("matches the same erf in the same township", () => {
     const c: CanonicalCandidate = { ...blank, property_id: "p", erf_number: "0123", township: "Demo Ridge" };
     expect(resolveIdentity({ ...blank, erf_number: "123", township: "demo ridge" }, [c])).toMatchObject({ kind: "auto_match" });

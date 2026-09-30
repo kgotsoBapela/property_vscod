@@ -4,6 +4,7 @@ import { createFixtureAdapter } from "../src/adapters/fixture";
 import { runSyncJob } from "../src/sync/pipeline";
 import { SqlSyncStore, type SqlExec } from "../src/sync/sql-store";
 import type { SyncJob, SyncScope } from "../src/types/domain";
+import type { NormalizedProperty } from "../src/schemas/normalized";
 import { asUser, createTestDb } from "./support/pglite";
 
 // Runs the real migrations on PostgreSQL (PGlite) and drives the sync pipeline through commit_sync_item.
@@ -101,10 +102,116 @@ describe("migrations + sync on PostgreSQL", () => {
     expect(saved[0]).toMatchObject({ status: "failed", error_category: "transient" });
   });
 
+  it("creates every valid fixture property; different erfs at one address are not sent to review", async () => {
+    expect(await count("properties")).toBe(91);
+    const open = await exec<{ n: number }>("select count(*)::int as n from public.identity_review_queue where status = 'open'");
+    expect(open[0]!.n).toBe(0);
+  });
+
   it("returns nearby sales for comparables", async () => {
     const subject = (await exec<{ id: string }>("select id from public.properties where latitude is not null limit 1"))[0]!.id;
     const rows = await exec("select * from public.nearby_sales($1, 1500, '2020-01-01')", [subject]);
     expect(rows.length).toBeGreaterThan(0);
+  });
+});
+
+describe("identity review resolution", () => {
+  const store = () => new SqlSyncStore(exec);
+  const record = (ext: string, erf: string): NormalizedProperty => ({
+    type: "property",
+    external_id: ext,
+    address: `9${erf} Review Road, Fixture Park`,
+    street_number: `9${erf}`,
+    street_name: "Review Road",
+    unit_number: null,
+    complex_name: null,
+    suburb: "Fixture Park",
+    municipality: null,
+    province: "Gauteng",
+    postal_code: null,
+    latitude: null,
+    longitude: null,
+    property_type: "freehold",
+    erf_size_m2: 500,
+    floor_size_m2: 150,
+    bedrooms: 3,
+    bathrooms: 2,
+    erf_number: erf,
+    portion: null,
+    township: "Fixture Park",
+    scheme_name: null,
+    scheme_number: null,
+    title_deed: null,
+    identifiers_verified: true,
+    sales: [],
+    valuations: [],
+  });
+  const queue = async (ext: string, erf: string) => {
+    const jobId = (await createJob("subject_property")).id;
+    await exec("update public.sync_jobs set status = 'completed' where id = $1", [jobId]);
+    const source = { provider: "fixture_demo", external_id: ext, content_hash: ext, raw: null, retrieved_at: new Date().toISOString(), retention_until: null, is_demo: true };
+    await store().commitItem({
+      kind: "property",
+      job_id: jobId,
+      integration_id: integrationId,
+      source,
+      record: record(ext, erf),
+      resolution: { property_id: null, confidence: 0.6, evidence: [], review: { candidates: [], reason: "test" } },
+    });
+    return (await exec<{ id: string }>("select id from public.identity_review_queue where external_id = $1 and status = 'open'", [ext]))[0]!.id;
+  };
+  const resolve = (uid: string, id: string, action: string, pid: string | null = null) =>
+    asUser(db, uid, () => exec<{ r: string | null }>("select public.resolve_identity_review($1, $2, $3) as r", [id, action, pid]));
+
+  it("creates a new property from a review item, with audit", async () => {
+    const id = await queue("REV-1", "8001");
+    const before = await count("properties");
+    const [r] = await resolve(users.admin, id, "create_new");
+    expect(r!.r).toBeTruthy();
+    expect(await count("properties")).toBe(before + 1);
+    const q = await exec<{ status: string; resolution: string }>("select status, resolution from public.identity_review_queue where id = $1", [id]);
+    expect(q[0]).toMatchObject({ status: "resolved", resolution: "created_new" });
+    const audit = await exec("select 1 from public.audit_logs where action = 'identity_review.create_new' and target = $1", [id]);
+    expect(audit).toHaveLength(1);
+  });
+
+  it("merges into an existing property without dropping that property's identifiers", async () => {
+    const target = (await exec<{ property_id: string }>("select property_id from public.property_identifiers where external_id = 'FXP-0001'"))[0]!.property_id;
+    const id = await queue("REV-2", "8002");
+    await resolve(users.super, id, "merge", target);
+    const ids = await exec<{ external_id: string }>(
+      "select external_id from public.property_identifiers where property_id = $1 and kind = 'provider_property_id' order by 1",
+      [target],
+    );
+    expect(ids.map((i) => i.external_id)).toEqual(["FXP-0001", "REV-2"]);
+  });
+
+  it("rejects without creating anything, and refuses viewers", async () => {
+    const id = await queue("REV-3", "8003");
+    await expect(resolve(users.viewer, id, "reject")).rejects.toThrow(/Not permitted/);
+    const before = await count("properties");
+    await resolve(users.admin, id, "reject");
+    expect(await count("properties")).toBe(before);
+    await expect(resolve(users.admin, id, "reject")).rejects.toThrow(/already resolved/);
+  });
+
+  it("confirms an ambiguous auction lot and keeps the decision across syncs", async () => {
+    const lot = (
+      await exec<{ auction_id: string; lot_index: number; candidate: string }>(
+        `select ap.auction_id, ap.lot_index, ap.candidate_property_ids[1] as candidate
+           from public.auction_properties ap join public.auctions a on a.id = ap.auction_id where a.external_id = 'FXA-006'`,
+      )
+    )[0]!;
+    await expect(
+      asUser(db, users.viewer, () => exec("select public.resolve_auction_lot($1, $2, 'confirm', $3)", [lot.auction_id, lot.lot_index, lot.candidate])),
+    ).rejects.toThrow(/Not permitted/);
+    await asUser(db, users.admin, () => exec("select public.resolve_auction_lot($1, $2, 'confirm', $3)", [lot.auction_id, lot.lot_index, lot.candidate]));
+    await runSyncJob(await createJob("auctions"), createFixtureAdapter(), store(), {}, { retry: noSleep });
+    const after = await exec<{ review_status: string; property_id: string }>(
+      "select review_status, property_id from public.auction_properties where auction_id = $1 and lot_index = $2",
+      [lot.auction_id, lot.lot_index],
+    );
+    expect(after[0]).toMatchObject({ review_status: "confirmed", property_id: lot.candidate });
   });
 });
 

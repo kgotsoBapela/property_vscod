@@ -14,7 +14,8 @@ import type {
   SyncJob,
   SyncJobEvent,
 } from "../types/domain";
-import type { CommitItem, PropertyResolution, SyncStore } from "./pipeline";
+import type { CommitItem, PropertyResolution, SourceRecordInput, SyncStore } from "./pipeline";
+import type { NormalizedProperty } from "../schemas/normalized";
 
 export interface StoredSourceRecord {
   id: string;
@@ -37,11 +38,20 @@ export interface ReviewItem {
   candidates: NonNullable<PropertyResolution["review"]>["candidates"];
   reason: string;
   status: "open" | "resolved";
+  resolution: "merged" | "created_new" | "rejected" | "resolved_by_sync" | null;
+  resolved_property_id: string | null;
+  /** Kept so a reviewer's decision can be committed without re-fetching from the provider. */
+  record: NormalizedProperty;
+  source: SourceRecordInput;
 }
 
 export interface AuctionLinkRow extends AuctionPropertyLink {
+  lot_index: number;
   candidate_property_ids: string[];
 }
+
+export type IdentityReviewAction = "merge" | "create_new" | "reject";
+export type LotReviewAction = "confirm" | "reject";
 
 /** Deterministic UUID-shaped ids so demo URLs are stable across restarts. */
 function idFactory(prefix: number) {
@@ -88,6 +98,8 @@ export class MemorySyncStore implements SyncStore {
   }
 
   async getSourceHash(provider: string, externalId: string) {
+    // Records awaiting review are re-evaluated on every sync, even if unchanged (matching rules may have improved).
+    if (this.reviewQueue.some((q) => q.provider === provider && q.external_id === externalId && q.status === "open")) return null;
     return this.sourceRecords.get(this.key(provider, externalId))?.content_hash ?? null;
   }
 
@@ -159,7 +171,9 @@ export class MemorySyncStore implements SyncStore {
         // Ambiguous: keep the source record, queue for a human, do not merge or create.
         this.sourceRecords.set(srcKey, source);
         const existing = this.reviewQueue.find((q) => q.provider === item.source.provider && q.external_id === r.external_id && q.status === "open");
-        if (!existing) {
+        if (existing) {
+          Object.assign(existing, { candidates: item.resolution.review.candidates, reason: item.resolution.review.reason, record: r, source: item.source });
+        } else {
           this.reviewQueue.push({
             id: this.nextId(),
             created_at: item.source.retrieved_at,
@@ -169,9 +183,21 @@ export class MemorySyncStore implements SyncStore {
             candidates: item.resolution.review.candidates,
             reason: item.resolution.review.reason,
             status: "open",
+            resolution: null,
+            resolved_property_id: null,
+            record: r,
+            source: item.source,
           });
         }
         return { property_id: null };
+      }
+
+      // Resolved automatically (e.g. improved matching): close any open review for this record.
+      for (const q of this.reviewQueue) {
+        if (q.provider === item.source.provider && q.external_id === r.external_id && q.status === "open") {
+          q.status = "resolved";
+          q.resolution = "resolved_by_sync";
+        }
       }
 
       const propertyId = item.resolution.property_id ?? this.externalToCanonical.get(srcKey) ?? this.nextPropertyId();
@@ -258,8 +284,14 @@ export class MemorySyncStore implements SyncStore {
       this.sourceRecords.set(srcKey, source);
       this.externalToCanonical.set(srcKey, propertyId);
       this.properties.set(propertyId, property);
+      // Replace only identifiers that came from THIS source record; other records merged into the property keep theirs.
       this.identifiers = this.identifiers.filter(
-        (i) => !(i.property_id === propertyId && i.provider === item.source.provider),
+        (i) =>
+          !(
+            i.property_id === propertyId &&
+            i.provider === item.source.provider &&
+            (i.external_id === r.external_id || i.provenance.source_record_id === source.id)
+          ),
       );
       this.identifiers.push(...newIdentifiers);
       r.sales.forEach((s, i) => this.sales.set(this.key(item.source.provider, s.external_id), sales[i]!));
@@ -315,6 +347,7 @@ export class MemorySyncStore implements SyncStore {
       const lot = r.lots[l.lot_index]!;
       return {
         auction_id: auction.id,
+        lot_index: l.lot_index,
         property_id: l.property_id,
         candidate_property_ids: l.candidate_property_ids,
         lot_number: lot.lot_number,
@@ -339,9 +372,47 @@ export class MemorySyncStore implements SyncStore {
     this.sourceRecords.set(srcKey, source);
     if (sheriff && r.sheriff_office) this.sheriffOffices.set(this.key(item.source.provider, r.sheriff_office.external_id), sheriff);
     this.auctions.set(auctionKey, auction);
-    this.auctionLinks = this.auctionLinks.filter((l) => l.auction_id !== auction.id).concat(links);
+    // Replace machine links but keep human decisions (confirmed/rejected), as commit_sync_item does.
+    const human = this.auctionLinks.filter((l) => l.auction_id === auction.id && (l.review_status === "confirmed" || l.review_status === "rejected"));
+    this.auctionLinks = this.auctionLinks
+      .filter((l) => l.auction_id !== auction.id)
+      .concat(human, links.filter((l) => !human.some((h) => h.lot_index === l.lot_index)));
     r.documents.forEach((d, i) => this.documents.set(this.key(item.source.provider, d.external_id), docs[i]!));
     return { property_id: null };
+  }
+
+  /** Applies a reviewer's decision on an ambiguous property record (mirrors resolve_identity_review in SQL). */
+  async resolveIdentityReview(reviewId: string, action: IdentityReviewAction, propertyId: string | null): Promise<string | null> {
+    const q = this.reviewQueue.find((x) => x.id === reviewId && x.status === "open");
+    if (!q) throw new Error("Review item not found or already resolved");
+    if (action === "merge" && (!propertyId || !this.properties.has(propertyId))) throw new Error("Choose the property to merge into");
+    let resolved: string | null = null;
+    if (action !== "reject") {
+      const res = await this.commitItem({
+        kind: "property",
+        job_id: "review",
+        integration_id: "review",
+        source: q.source,
+        record: q.record,
+        resolution: { property_id: action === "merge" ? propertyId : null, confidence: 1, evidence: ["Confirmed by reviewer"], review: null },
+      });
+      resolved = res.property_id;
+    }
+    q.status = "resolved";
+    q.resolution = action === "merge" ? "merged" : action === "create_new" ? "created_new" : "rejected";
+    q.resolved_property_id = resolved;
+    return resolved;
+  }
+
+  /** Applies a reviewer's decision on an auction lot (mirrors resolve_auction_lot in SQL). */
+  resolveAuctionLot(auctionId: string, lotIndex: number, action: LotReviewAction, propertyId: string | null) {
+    const link = this.auctionLinks.find((l) => l.auction_id === auctionId && l.lot_index === lotIndex);
+    if (!link) throw new Error("Auction lot not found");
+    if (action === "confirm" && (!propertyId || !this.properties.has(propertyId))) throw new Error("Choose the matching property");
+    link.property_id = action === "confirm" ? propertyId : null;
+    link.review_status = action === "confirm" ? "confirmed" : "rejected";
+    link.match_confidence = action === "confirm" ? 1 : 0;
+    link.match_evidence = [action === "confirm" ? "Confirmed by reviewer" : "Rejected by reviewer", ...link.match_evidence];
   }
 
   private touchProvenance(sourceRecordId: string, at: string) {

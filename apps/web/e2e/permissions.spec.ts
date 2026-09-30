@@ -35,6 +35,11 @@ test.describe("API authorization matrix", () => {
           expected: { super_admin: 400, admin: 403, viewer: 403 },
         },
         {
+          name: "POST review decision (invalid body)",
+          call: async () => (await request.post("/api/review", { data: { kind: "identity" } })).status(),
+          expected: { super_admin: 400, admin: 400, viewer: 403 },
+        },
+        {
           name: "POST invite",
           call: async () => (await request.post("/api/admin/invite", { data: { email: "x@example.org", role: "viewer" } })).status(),
           // Demo mode has no Supabase Auth: permitted roles get 400, others 403.

@@ -72,15 +72,47 @@ export interface AuctionDetail {
   lots: (AuctionMatch & { property: Property | null; candidates: Property[] })[];
 }
 
-export interface ReviewQueueItem {
-  id: string;
-  created_at: string;
-  provider: string;
-  external_id: string;
-  description: string;
-  reason: string;
-  candidates: { property_id: string; confidence: number; evidence: string[]; conflicts: string[] }[];
+export interface ReviewCandidate {
+  property_id: string;
+  confidence: number;
+  evidence: string[];
+  conflicts: string[];
+  /** Filled for display: address and legal identifiers of the candidate property. */
+  address: string | null;
+  identifiers: PropertyIdentifier[];
 }
+
+export type ReviewQueueItem =
+  | {
+      kind: "identity";
+      id: string;
+      created_at: string;
+      provider: string;
+      external_id: string;
+      description: string;
+      /** Legal identifiers as described by the incoming record. */
+      record_identity: string | null;
+      reason: string;
+      candidates: ReviewCandidate[];
+    }
+  | {
+      kind: "auction_lot";
+      id: string; // `${auction_id}:${lot_index}`
+      auction_id: string;
+      lot_index: number;
+      auction_title: string;
+      created_at: string;
+      provider: string;
+      external_id: string;
+      description: string;
+      record_identity: string | null;
+      reason: string;
+      candidates: ReviewCandidate[];
+    };
+
+export type ReviewDecision =
+  | { kind: "identity"; id: string; action: "merge" | "create_new" | "reject"; property_id: string | null }
+  | { kind: "auction_lot"; auction_id: string; lot_index: number; action: "confirm" | "reject"; property_id: string | null };
 
 export interface Overview {
   counts: { properties: number; registered_sales: number; upcoming_auctions: number; open_reviews: number; lots_needing_review: number };
@@ -136,6 +168,8 @@ export interface DataRepository {
   createJob(input: CreateSyncJobInput, actor: Actor): Promise<SyncJob>;
   cancelJob(id: string, actor: Actor): Promise<void>;
   listReviewQueue(): Promise<ReviewQueueItem[]>;
+  /** Applies a reviewer's decision atomically, with audit. Returns the resolved property id, if any. */
+  resolveReview(decision: ReviewDecision, actor: Actor): Promise<string | null>;
   listAuditLogs(actor: Actor, all: boolean): Promise<AuditLog[]>;
   writeAudit(actor: Actor, action: string, target: string | null, details?: Record<string, unknown>): Promise<void>;
   toggleWatchlist(propertyId: string, actor: Actor): Promise<boolean>;
