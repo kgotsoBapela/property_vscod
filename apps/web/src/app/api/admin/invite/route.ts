@@ -12,8 +12,8 @@ export async function POST(req: Request) {
     if (isDemoMode()) throw new HttpError(400, "Invitations require Supabase Auth");
 
     const admin = createSupabaseAdminClient();
-    const origin = new URL(req.url).origin;
-    const { data, error } = await admin.auth.admin.inviteUserByEmail(input.email, { redirectTo: `${origin}/auth/callback?next=/reset-password` });
+    // The "Invite user" email template links to {{ .SiteURL }}/auth/confirm (see README), so no redirectTo is needed.
+    const { data, error } = await admin.auth.admin.inviteUserByEmail(input.email);
     if (error) throw new HttpError(400, error.message);
     // Role goes into app_metadata (service-role only) and user_roles. The DB trigger reads app_metadata for new users.
     await admin.auth.admin.updateUserById(data.user.id, { app_metadata: { role: input.role, invited_by: viewer.id } });

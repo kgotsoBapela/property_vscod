@@ -57,13 +57,58 @@ export function ForgotPasswordForm() {
       className="flex flex-col gap-4"
       onSubmit={async (e) => {
         e.preventDefault();
-        await createSupabaseBrowserClient().auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/auth/callback?next=/reset-password` });
+        // The "Reset password" email template links to /auth/confirm (see README), so no redirectTo is needed.
+        await createSupabaseBrowserClient().auth.resetPasswordForEmail(email);
         setSent(true); // same message whether or not the account exists
       }}
     >
       <Field id="email" label="Email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
       <Button type="submit">Send reset link</Button>
     </form>
+  );
+}
+
+/**
+ * Consumes an invitation / recovery token only when the person clicks, so email security scanners that
+ * pre-open links cannot use up the one-time token.
+ */
+export function ConfirmEmailLink({ tokenHash, type }: { tokenHash: string; type: "invite" | "recovery" }) {
+  const router = useRouter();
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="flex flex-col gap-4">
+      <p className="text-sm text-muted-foreground">
+        {type === "invite" ? "Continue to activate your account and choose a password." : "Continue to choose a new password."}
+      </p>
+      <Button
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setError(null);
+          const res = await fetch("/api/auth/verify", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ token_hash: tokenHash, type }),
+          });
+          const body = await res.json().catch(() => ({}));
+          setBusy(false);
+          if (!res.ok) return setError(body.error ?? "Verification failed");
+          router.push(body.next ?? "/reset-password");
+          router.refresh();
+        }}
+      >
+        Continue
+      </Button>
+      {error && (
+        <p className="text-sm text-critical">
+          {error}{" "}
+          <Link href="/forgot-password" className="underline">
+            Request a new link
+          </Link>
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -78,7 +123,13 @@ export function ResetPasswordForm() {
         e.preventDefault();
         if (password.length < 12) return setError("Use at least 12 characters.");
         const { error } = await createSupabaseBrowserClient().auth.updateUser({ password });
-        if (error) return setError(error.message);
+        if (error) {
+          return setError(
+            /session/i.test(error.message)
+              ? "Your link has expired or was already used. Request a new reset email from the sign-in page."
+              : error.message,
+          );
+        }
         router.push("/");
         router.refresh();
       }}

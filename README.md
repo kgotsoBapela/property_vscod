@@ -38,8 +38,16 @@ property, then Comparables, Report and Scenario. In the Sync center, queue an in
 2. Copy `.env.example` → `apps/web/.env.local` (web) and set the worker env vars.
 3. Bootstrap the first Super Admin: create the user in Supabase Auth, then
    `insert into user_roles (user_id, role) values ('<uuid>', 'super_admin');`. Further users are invited from *Team & roles*.
-4. Run the worker: `DATABASE_URL=… npm run worker` (or `docker build -f apps/worker/Dockerfile .`).
-5. In the Sync center, run an **Auction refresh** and a **Provider incremental sync** on the fixture integration to load demo data.
+4. Configure Supabase Auth (dashboard):
+   - **URL Configuration:** Site URL = the app's origin (e.g. `http://localhost:3000`).
+   - **Sign In / Providers:** disable "Allow new users to sign up" (invitation-only); keep Email enabled; TOTP MFA enabled.
+   - **Email templates:** email links must point at `/auth/confirm`, which asks the person to click *Continue* before the one-time
+     token is used (so corporate link scanners cannot consume it):
+     - *Invite user*: `<a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=invite">Accept the invitation</a>`
+     - *Reset password*: `<a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=recovery">Reset your password</a>`
+   - **SMTP:** the built-in sender is heavily rate-limited; configure your own SMTP before real use.
+5. Run the worker: `DATABASE_URL=… npm run worker` (or `docker build -f apps/worker/Dockerfile .`).
+6. In the Sync center, run an **Auction refresh** and a **Provider incremental sync** on the fixture integration to load demo data.
 
 ## Commands
 
