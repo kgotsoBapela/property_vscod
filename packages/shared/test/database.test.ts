@@ -21,7 +21,7 @@ const noSleep = { retries: 1, baseDelayMs: 1, maxDelayMs: 1, timeoutMs: 5000, sl
 
 async function createJob(scope: SyncScope, params: Record<string, unknown> = {}): Promise<SyncJob> {
   const rows = await exec<SyncJob>(
-    `insert into public.sync_jobs (integration_id, scope, params, trigger) values ($1, $2, $3::jsonb, 'schedule') returning *`,
+    `insert into public.sync_jobs (integration_id, scope, params, trigger) values ($1, $2, $3::text::jsonb, 'schedule') returning *`,
     [integrationId, scope, JSON.stringify(params)],
   );
   return rows[0]!;
@@ -36,7 +36,7 @@ beforeAll(async () => {
   integrationId = (await exec<{ id: string }>("select id from public.integrations where provider_key = 'fixture_demo'"))[0]!.id;
   for (const [role, id] of Object.entries(users)) {
     const meta = role === "none" ? {} : { role: role === "super" ? "super_admin" : role };
-    await exec("insert into auth.users (id, email, raw_app_meta_data) values ($1, $2, $3::jsonb)", [id, `${role}@example.org`, JSON.stringify(meta)]);
+    await exec("insert into auth.users (id, email, raw_app_meta_data) values ($1, $2, $3::text::jsonb)", [id, `${role}@example.org`, JSON.stringify(meta)]);
   }
   const job = await createJob("full_reconciliation");
   const store = new SqlSyncStore(exec);

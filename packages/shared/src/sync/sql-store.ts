@@ -3,7 +3,10 @@ import type { CanonicalCandidate, IdentityFacts } from "../matching/identity";
 import type { SyncJob } from "../types/domain";
 import type { CommitItem, SyncStore } from "./pipeline";
 
-/** Minimal SQL executor: `$1`-style positional parameters, returns rows. */
+/**
+ * Minimal SQL executor: `$1`-style positional parameters, returns rows.
+ * JSON is passed as a string and cast with `$n::text::jsonb`: some drivers (postgres.js) otherwise send it as a JSON *string* scalar.
+ */
 export type SqlExec = <T = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<T[]>;
 
 const JOB_COLUMNS = new Set([
@@ -50,7 +53,7 @@ export class SqlSyncStore implements SyncStore {
 
   async findCandidates(facts: IdentityFacts): Promise<CanonicalCandidate[]> {
     const payload = { ...facts, street_key: facts.address ? normalizeAddress(facts.address) : null };
-    const rows = await this.exec<{ c: CanonicalCandidate[] | string }>("select public.find_property_candidates($1::jsonb) as c", [
+    const rows = await this.exec<{ c: CanonicalCandidate[] | string }>("select public.find_property_candidates($1::text::jsonb) as c", [
       JSON.stringify(payload),
     ]);
     const c = rows[0]?.c ?? [];
@@ -62,12 +65,12 @@ export class SqlSyncStore implements SyncStore {
       item.kind === "property"
         ? { ...item, street_key: streetAddressKey(item.record.street_number, item.record.street_name, item.record.suburb) }
         : item;
-    const rows = await this.exec<{ id: string | null }>("select public.commit_sync_item($1::jsonb) as id", [JSON.stringify(payload)]);
+    const rows = await this.exec<{ id: string | null }>("select public.commit_sync_item($1::text::jsonb) as id", [JSON.stringify(payload)]);
     return { property_id: rows[0]?.id ?? null };
   }
 
   async appendEvent(jobId: string, level: "info" | "warn" | "error", message: string, data?: Record<string, unknown>) {
-    await this.exec("insert into public.sync_job_events (job_id, level, message, data) values ($1, $2, $3, $4::jsonb)", [
+    await this.exec("insert into public.sync_job_events (job_id, level, message, data) values ($1, $2, $3, $4::text::jsonb)", [
       jobId,
       level,
       message,
