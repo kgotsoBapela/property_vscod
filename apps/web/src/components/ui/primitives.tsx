@@ -35,7 +35,8 @@ export function Button({
 }
 
 export function Card({ className, ...props }: React.ComponentProps<"div">) {
-  return <div className={cn("rounded-lg border bg-card text-card-foreground shadow-xs", className)} {...props} />;
+  // min-w-0 lets wide tables scroll inside the card instead of stretching grid columns past the viewport.
+  return <div className={cn("min-w-0 rounded-lg border bg-card text-card-foreground shadow-xs", className)} {...props} />;
 }
 export function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
   return <div className={cn("flex flex-col gap-1 p-5 pb-3", className)} {...props} />;

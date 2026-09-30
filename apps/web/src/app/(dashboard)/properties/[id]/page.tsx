@@ -50,9 +50,9 @@ export default async function PropertyPage(props: PageProps<"/properties/[id]">)
   const ind = analysis.indication;
   const integrations = can(viewer.role, "sync:trigger") ? await repo.listIntegrations() : [];
   const syncIntegration = integrations.find((i) => ["active", "sandbox"].includes(i.status) && i.capabilities.includes("subject_property"));
-  const chartPoints = recent.transfers
-    .concat(d.sales.filter((s) => s.verification_status === "verified" && s.registration_date && !recent.transfers.includes(s)))
-    .filter((s) => s.transfer_amount != null)
+  // Chart market evidence only: forced sales and related-party transfers would read as price moves.
+  const chartPoints = d.sales
+    .filter((s) => s.verification_status === "verified" && s.registration_date && s.is_arms_length && s.transfer_amount != null)
     .map((s) => ({ t: Date.parse(s.registration_date!), amount: s.transfer_amount!, label: `${fmtDate(s.registration_date)} · ${TRANSFER_TYPE_LABELS[s.transfer_type]}` }))
     .sort((a, b) => a.t - b.t);
   const legal = d.identifiers.filter((i) => i.kind !== "provider_property_id");
@@ -189,7 +189,7 @@ export default async function PropertyPage(props: PageProps<"/properties/[id]">)
                   : `Only ${recent.available} verified registered transfer${recent.available === 1 ? " is" : "s are"} available (up to 5 requested).`}
             </CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-6 lg:grid-cols-2">
+          <CardContent className="flex flex-col gap-6">
             {recent.transfers.length === 0 ? (
               <EmptyState title="No transfer history">Missing history is shown as missing; nothing is estimated in its place.</EmptyState>
             ) : (
@@ -223,8 +223,11 @@ export default async function PropertyPage(props: PageProps<"/properties/[id]">)
                 </TBody>
               </Table>
             )}
-            <div className="flex flex-col gap-3">
-              {chartPoints.length >= 2 ? <TransferHistoryChart points={chartPoints} /> : <EmptyState title="Not enough transfers to chart" />}
+            <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+              <div className="min-w-0">
+                <div className="mb-2 text-xs text-muted-foreground">Arm&apos;s-length registered transfers over time (forced and related-party transfers omitted)</div>
+                {chartPoints.length >= 2 ? <TransferHistoryChart points={chartPoints} /> : <EmptyState title="Not enough arm's-length transfers to chart" />}
+              </div>
               {appreciation.length > 0 && (
                 <div className="text-xs text-muted-foreground">
                   <div className="mb-1 font-medium text-foreground">Appreciation between arm&apos;s-length registered transfers</div>

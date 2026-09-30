@@ -90,10 +90,10 @@ export interface MarketPointView {
   sample_count: number;
 }
 
-/** Suburb median registered price per m², half-yearly. Periods with too few sales show as gaps. */
+/** Suburb median registered price per m². Periods with too few sales show as gaps. */
 export function MarketChart({ series }: { series: MarketPointView[] }) {
   return (
-    <div className="h-56 w-full rounded-md bg-[var(--chart-surface)]" role="img" aria-label="Suburb median price per square metre by half-year">
+    <div className="h-56 w-full rounded-md bg-[var(--chart-surface)]" role="img" aria-label="Suburb median price per square metre by year">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={series} margin={{ top: 12, right: 16, bottom: 4, left: 4 }}>
           <CartesianGrid stroke="var(--chart-grid)" vertical={false} />

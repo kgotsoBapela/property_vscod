@@ -334,8 +334,8 @@ export function buildFixtureAuctions(props: FixturePropertyRaw[]): FixtureAuctio
     lon: p.location?.lon ?? null,
     ...overrides,
   });
-  const docs = (ref: string, withConditions = true) => [
-    { ref: `${ref}-N`, kind: "notice" as const, title: "Notice of sale in execution (synthetic)", url: `https://example.org/demo/notices/${ref}.pdf`, published_at: "2026-09-12T08:00:00+02:00" },
+  const docs = (ref: string, withConditions = true, sheriffSale = true) => [
+    { ref: `${ref}-N`, kind: "notice" as const, title: sheriffSale ? "Notice of sale in execution (synthetic)" : "Auction listing notice (synthetic)", url: `https://example.org/demo/notices/${ref}.pdf`, published_at: "2026-09-12T08:00:00+02:00" },
     ...(withConditions
       ? [{ ref: `${ref}-C`, kind: "conditions_of_sale" as const, title: "Conditions of sale (synthetic)", url: `https://example.org/demo/conditions/${ref}.pdf`, published_at: "2026-09-12T08:00:00+02:00" }]
       : []),
@@ -372,7 +372,7 @@ export function buildFixtureAuctions(props: FixturePropertyRaw[]): FixtureAuctio
       guide: { amount: 3_400_000, published: true }, reserve: { amount: null, published: false }, opening_bid: { amount: 2_900_000, published: true }, hammer: null,
       deposit: "Buyer's commission and deposit per conditions of sale (synthetic)", conditions: "Subject to seller confirmation within 7 business days (synthetic).",
       case_no: null, notice_url: "https://example.org/demo/auctions/FXA-003", verified_at: "2026-09-27T10:00:00+02:00",
-      lots: [lotFrom(pick("FXP-0050"), "A")], documents: docs("FXA-003"),
+      lots: [lotFrom(pick("FXP-0050"), "A")], documents: docs("FXA-003", true, false),
     },
     {
       record_type: "auction", ref: "FXA-004", kind: "sheriff", house: null, sheriff: SHERIFFS.north,
@@ -392,7 +392,7 @@ export function buildFixtureAuctions(props: FixturePropertyRaw[]): FixtureAuctio
       guide: { amount: 2_100_000, published: true }, reserve: null, opening_bid: { amount: 1_800_000, published: true }, hammer: { amount: 2_050_000, published: true },
       deposit: null, conditions: null, case_no: null,
       notice_url: "https://example.org/demo/auctions/FXA-005", verified_at: "2026-08-21T09:00:00+02:00",
-      lots: [lotFrom(pick("FXP-0010"), "1")], documents: docs("FXA-005", false),
+      lots: [lotFrom(pick("FXP-0010"), "1")], documents: docs("FXA-005", false, false),
     },
     {
       // Address-only lot description: identity cannot be confirmed, so it must go to human review.

@@ -2,7 +2,7 @@ import type { Property, PropertySale, PropertyType } from "../types/domain";
 import { quantile } from "./comparables";
 
 export interface MarketPoint {
-  period: string; // e.g. "2025-H2"
+  period: string; // calendar year, e.g. "2025"
   period_start: string;
   period_end: string;
   sample_count: number;
@@ -13,14 +13,13 @@ export interface MarketPoint {
 /** Minimum sales per period before a median is shown; smaller samples are reported as insufficient. */
 export const MIN_MARKET_SAMPLE = 3;
 
-function halfYear(date: string) {
-  const y = Number(date.slice(0, 4));
-  const h = Number(date.slice(5, 7)) <= 6 ? 1 : 2;
-  return { key: `${y}-H${h}`, start: h === 1 ? `${y}-01-01` : `${y}-07-01`, end: h === 1 ? `${y}-06-30` : `${y}-12-31` };
+function calendarYear(date: string) {
+  const y = date.slice(0, 4);
+  return { key: y, start: `${y}-01-01`, end: `${y}-12-31` };
 }
 
 /**
- * Half-yearly median registered prices for a suburb and property type, from verified arm's-length
+ * Annual median registered prices for a suburb and property type, from verified arm's-length
  * transfers only. Periods with fewer than MIN_MARKET_SAMPLE sales keep their count but no median.
  */
 export function suburbMarketSeries(
@@ -38,7 +37,7 @@ export function suburbMarketSeries(
     if (propertyType !== "all" && p.property_type !== propertyType) continue;
     if (!s.is_arms_length || s.verification_status !== "verified" || !s.transfer_amount || !s.registration_date) continue;
     if (s.registration_date < fromDate) continue;
-    const h = halfYear(s.registration_date);
+    const h = calendarYear(s.registration_date);
     const b = buckets.get(h.key) ?? { start: h.start, end: h.end, prices: [], ppm2: [] };
     b.prices.push(s.transfer_amount);
     if (p.floor_size_m2) b.ppm2.push(s.transfer_amount / p.floor_size_m2);
