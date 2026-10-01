@@ -11,6 +11,9 @@ import {
   type ComparableCandidate,
   type CreateSyncJobInput,
   type Integration,
+  type IntegrationCreateInput,
+  type IntegrationSecretMeta,
+  type IntegrationUpdateInput,
   type Property,
   type SyncJob,
 } from "@propintel/shared";
@@ -36,7 +39,24 @@ import {
 
 const INTEGRATION_ID = "fixture";
 
-const CANDIDATE_INTEGRATIONS: Omit<Integration, "last_success_at" | "last_failure_at" | "schedule_cron" | "schedule_timezone" | "schedule_enabled">[] = [
+type IntegrationRecord = Omit<Integration, "last_success_at" | "last_failure_at" | "schedule_cron" | "schedule_timezone" | "schedule_enabled">;
+
+const MATRIX_UNKNOWN = {
+  auth_method: null,
+  historical_coverage: null,
+  geographic_coverage: null,
+  update_frequency: null,
+  quota_per_day: null,
+  cost_per_call_zar: null,
+  monthly_cost_zar: null,
+  display_rights: null,
+  retention_rights: null,
+  automated_refresh_permitted: null,
+  contact_owner: null,
+  max_paid_calls_per_job: null,
+} satisfies Partial<Integration>;
+
+const SEED_INTEGRATIONS: Omit<IntegrationRecord, keyof typeof MATRIX_UNKNOWN>[] = [
   { id: INTEGRATION_ID, provider_key: "fixture_demo", display_name: "Synthetic fixture provider (DEMO)", category: "fixture", status: "active", website: null, is_demo: true, capabilities: ["subject_property", "nearby_sales", "auctions", "provider_incremental", "full_reconciliation"], notes: "Deterministic synthetic data for development and demos." },
   { id: "lightstone", provider_key: "lightstone", display_name: "Lightstone", category: "property_data", status: "candidate", website: "https://portal.apis.lightstone.co.za/", is_demo: false, capabilities: [], notes: "Investigate deeds, transfers, comps, AVM and suburb APIs. Access, pricing and licensing unverified." },
   { id: "property24_data", provider_key: "property24_data", display_name: "Property24 Property Data", category: "property_data", status: "candidate", website: "https://www.property24.com/products/property-data", is_demo: false, capabilities: [], notes: "Programmatic access and reuse rights unconfirmed. No scraping." },
@@ -54,6 +74,7 @@ interface DemoState {
   watchlists: Map<string, Set<string>>;
   overrides: Map<string, Record<string, "include" | "exclude">>;
   schedules: SyncScheduleRow[];
+  integrations: IntegrationRecord[];
   lastSuccess: string | null;
   lastFailure: string | null;
   seq: number;
@@ -95,6 +116,7 @@ function state(): DemoState {
         { id: "sched-incremental", integration_id: INTEGRATION_ID, scope: "provider_incremental", cron: "0 2 * * *", timezone: "Africa/Johannesburg", enabled: false, next_run_at: null },
         { id: "sched-auctions", integration_id: INTEGRATION_ID, scope: "auctions", cron: "0 6,18 * * *", timezone: "Africa/Johannesburg", enabled: false, next_run_at: null },
       ],
+      integrations: SEED_INTEGRATIONS.map((i) => ({ ...MATRIX_UNKNOWN, ...i, capabilities: [...i.capabilities] })),
       lastSuccess: null,
       lastFailure: null,
       seq: 0,
@@ -312,7 +334,7 @@ export class DemoRepository implements DataRepository {
   async listIntegrations(): Promise<Integration[]> {
     const s = await ready();
     const sched = s.schedules.find((x) => x.scope === "provider_incremental");
-    return CANDIDATE_INTEGRATIONS.map((i) => ({
+    return s.integrations.map((i) => ({
       ...i,
       last_success_at: i.id === INTEGRATION_ID ? s.lastSuccess : null,
       last_failure_at: i.id === INTEGRATION_ID ? s.lastFailure : null,
@@ -320,6 +342,40 @@ export class DemoRepository implements DataRepository {
       schedule_timezone: "Africa/Johannesburg",
       schedule_enabled: i.id === INTEGRATION_ID ? sched?.enabled ?? false : false,
     }));
+  }
+
+  async getIntegration(id: string) {
+    return (await this.listIntegrations()).find((i) => i.id === id) ?? null;
+  }
+
+  async createIntegration(input: IntegrationCreateInput, actor: Actor) {
+    const s = await ready();
+    if (s.integrations.some((i) => i.provider_key === input.provider_key)) {
+      throw new ConflictError(`An integration with key "${input.provider_key}" already exists.`);
+    }
+    s.integrations.push({ ...MATRIX_UNKNOWN, ...input, id: input.provider_key, status: "candidate", is_demo: false, capabilities: [], notes: null });
+    await this.writeAudit(actor, "integration.create", input.provider_key, { display_name: input.display_name });
+    return (await this.getIntegration(input.provider_key))!;
+  }
+
+  async updateIntegration(id: string, input: IntegrationUpdateInput, actor: Actor) {
+    const s = await ready();
+    const i = s.integrations.find((x) => x.id === id);
+    if (!i) throw new ConflictError("Integration not found");
+    Object.assign(i, input, { capabilities: [...input.capabilities] });
+    await this.writeAudit(actor, "integration.update", id, { status: input.status, capabilities: input.capabilities });
+  }
+
+  async listIntegrationSecrets(): Promise<IntegrationSecretMeta[]> {
+    return [];
+  }
+
+  async setIntegrationSecret(): Promise<void> {
+    throw new ConflictError("Credentials are stored in Supabase Vault and are not available in demo mode.");
+  }
+
+  async deleteIntegrationSecret(): Promise<void> {
+    throw new ConflictError("Credentials are stored in Supabase Vault and are not available in demo mode.");
   }
 
   async listSchedules() {

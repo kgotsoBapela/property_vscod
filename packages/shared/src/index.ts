@@ -19,3 +19,4 @@ export * from "./sync/memory-store";
 export * from "./fixtures/dataset";
 export * from "./sync/sql-store";
 export * from "./sync/cron";
+export * from "./integrations";

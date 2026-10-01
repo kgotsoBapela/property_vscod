@@ -215,6 +215,53 @@ describe("identity review resolution", () => {
   });
 });
 
+describe("integration credentials (Vault)", () => {
+  const set = (uid: string, name: string, value: string, aal: "aal1" | "aal2") =>
+    asUser(db, uid, () => exec("select public.set_integration_secret($1, $2, $3)", [integrationId, name, value]), aal);
+
+  it("lets only a Super Admin with MFA set credentials", async () => {
+    await expect(set(users.admin, "api_key", "x".repeat(20), "aal2")).rejects.toThrow(/Only a Super Admin/);
+    await expect(set(users.super, "api_key", "x".repeat(20), "aal1")).rejects.toThrow(/Two-factor/);
+    await set(users.super, "api_key", "sk_test_0123456789abcd", "aal2");
+    const meta = await asUser(db, users.super, () => exec<{ name: string; hint: string }>("select name, hint from public.integration_secrets"));
+    expect(meta).toEqual([{ name: "api_key", hint: "…abcd" }]);
+  });
+
+  it("never exposes values to users; only the worker can decrypt", async () => {
+    // Users cannot call the decrypting function, and the metadata table has no value column.
+    await expect(asUser(db, users.super, () => exec("select public.get_integration_secrets($1)", [integrationId]), "aal2")).rejects.toThrow(
+      /permission denied/,
+    );
+    const adminView = await asUser(db, users.admin, () => exec("select * from public.integration_secrets"));
+    expect(adminView).toHaveLength(0);
+    const worker = await exec<{ s: Record<string, string> }>("select public.get_integration_secrets($1) as s", [integrationId]);
+    expect(worker[0]!.s).toEqual({ api_key: "sk_test_0123456789abcd" });
+  });
+
+  it("replaces and removes credentials, with audit entries that omit the value", async () => {
+    await set(users.super, "api_key", "sk_test_rotated_value_9999", "aal2");
+    expect((await exec<{ s: Record<string, string> }>("select public.get_integration_secrets($1) as s", [integrationId]))[0]!.s).toEqual({
+      api_key: "sk_test_rotated_value_9999",
+    });
+    await asUser(db, users.super, () => exec("select public.delete_integration_secret($1, 'api_key')", [integrationId]), "aal2");
+    expect((await exec<{ s: object }>("select public.get_integration_secrets($1) as s", [integrationId]))[0]!.s).toEqual({});
+    expect(await exec("select 1 from vault.secrets")).toHaveLength(0);
+    const audit = await exec<{ details: string }>("select details::text from public.audit_logs where action like 'integration.secret_%'");
+    expect(audit.length).toBe(3);
+    expect(audit.map((a) => a.details).join(" ")).not.toMatch(/sk_test/);
+  });
+
+  it("lets a Super Admin add a candidate provider but not an active or demo one", async () => {
+    const add = (uid: string, status: string) =>
+      asUser(db, uid, () =>
+        exec("insert into public.integrations (provider_key, display_name, category, status) values ($1, 'X', 'property_data', $2)", [`p_${status}_${uid.slice(0, 4)}`, status]),
+      );
+    await expect(add(users.admin, "candidate")).rejects.toThrow(/row-level security/);
+    await expect(add(users.super, "active")).rejects.toThrow(/row-level security/);
+    await expect(add(users.super, "candidate")).resolves.toBeDefined();
+  });
+});
+
 describe("row level security", () => {
   it("lets every role read property data but blocks users without a role", async () => {
     for (const id of [users.super, users.admin, users.viewer]) {

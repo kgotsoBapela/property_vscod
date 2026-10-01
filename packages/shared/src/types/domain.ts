@@ -248,6 +248,27 @@ export interface Integration {
   schedule_cron: string | null;
   schedule_timezone: string;
   schedule_enabled: boolean;
+  // Provider matrix (docs/provider-matrix.md). null = unknown, never guessed.
+  auth_method: string | null;
+  historical_coverage: string | null;
+  geographic_coverage: string | null;
+  update_frequency: string | null;
+  quota_per_day: number | null;
+  cost_per_call_zar: number | null;
+  monthly_cost_zar: number | null;
+  display_rights: string | null;
+  retention_rights: string | null;
+  automated_refresh_permitted: boolean | null;
+  contact_owner: string | null;
+  max_paid_calls_per_job: number | null;
+}
+
+/** Credential metadata only. Values never leave Supabase Vault except to the worker. */
+export interface IntegrationSecretMeta {
+  name: string;
+  hint: string | null;
+  set_at: string;
+  set_by_label: string | null;
 }
 
 export interface AuditLog {

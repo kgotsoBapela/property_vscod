@@ -29,9 +29,20 @@ infer prices, fields or rights from marketing pages.
 9. Personal information: which owner/debtor fields are returned, and can they be suppressed at source?
 10. Named commercial and technical contacts, SLA, and change-notification process.
 
+## Managing providers in the app (Super Admin)
+
+*Integrations* lists every provider. Super Admins can **Add integration** (it starts as a candidate) and open **Manage** to:
+
+- record the matrix fields above (blank means unknown; never guess), status and what the provider supplies;
+- store **API credentials** (api_key, client_id, client_secret, …). Values are encrypted in Supabase Vault, are write-only in the
+  UI, require two-factor sign-in, and are only decrypted by the worker while syncing that provider. Changes are audited without values.
+
+A provider can only be set to *Sandbox* or *Active* once its connector exists (`IMPLEMENTED_ADAPTERS`).
+
 ## Adding a real adapter
 
 Implement `SourceAdapter` (`packages/shared/src/adapters/types.ts`) in `apps/worker/src/adapters/`, validate raw payloads with a
 Zod schema written from the **documented** response, map to the normalized schema, register it in
-`apps/worker/src/adapters/registry.ts`, and add contract tests with the provider's sample payloads. Set `licensing` from the
-agreement. Credentials come from the worker's environment/secrets manager only.
+`apps/worker/src/adapters/registry.ts` (its factory receives the decrypted credentials) and add its key to `IMPLEMENTED_ADAPTERS`
+(`packages/shared/src/integrations.ts`). Add contract tests with the provider's sample payloads and set `licensing` from the
+agreement. Never log credentials.

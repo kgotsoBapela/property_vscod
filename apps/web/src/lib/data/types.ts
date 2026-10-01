@@ -5,6 +5,9 @@ import type {
   ComparableCandidate,
   CreateSyncJobInput,
   Integration,
+  IntegrationCreateInput,
+  IntegrationSecretMeta,
+  IntegrationUpdateInput,
   MarketPoint,
   Property,
   PropertyIdentifier,
@@ -161,6 +164,13 @@ export interface DataRepository {
   listSheriffOffices(): Promise<(SheriffOffice & { upcoming: number })[]>;
   getSheriffOffice(id: string): Promise<{ office: SheriffOffice; auctions: AuctionListItem[] } | null>;
   listIntegrations(): Promise<Integration[]>;
+  getIntegration(id: string): Promise<Integration | null>;
+  createIntegration(input: IntegrationCreateInput, actor: Actor): Promise<Integration>;
+  updateIntegration(id: string, input: IntegrationUpdateInput, actor: Actor): Promise<void>;
+  /** Credential metadata only (names, hints, when, by whom). */
+  listIntegrationSecrets(integrationId: string): Promise<IntegrationSecretMeta[]>;
+  setIntegrationSecret(integrationId: string, name: string, value: string, actor: Actor): Promise<void>;
+  deleteIntegrationSecret(integrationId: string, name: string, actor: Actor): Promise<void>;
   listSchedules(): Promise<SyncScheduleRow[]>;
   updateSchedule(id: string, patch: { cron: string; enabled: boolean }, actor: Actor): Promise<void>;
   listJobs(limit: number): Promise<SyncJob[]>;

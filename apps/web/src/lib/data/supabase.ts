@@ -8,6 +8,9 @@ import {
   type ComparableCandidate,
   type CreateSyncJobInput,
   type Integration,
+  type IntegrationCreateInput,
+  type IntegrationSecretMeta,
+  type IntegrationUpdateInput,
   type Property,
   type PropertyIdentifier,
   type PropertySale,
@@ -339,12 +342,79 @@ export class SupabaseRepository implements DataRepository {
       const s = ((scheds.data ?? []) as Row[]).find((x) => x.integration_id === i.id);
       return {
         ...(i as unknown as Integration),
+        quota_per_day: num(i.quota_per_day),
+        cost_per_call_zar: num(i.cost_per_call_zar),
+        monthly_cost_zar: num(i.monthly_cost_zar),
+        max_paid_calls_per_job: num(i.max_paid_calls_per_job),
         capabilities: ((caps.data ?? []) as Row[]).filter((c) => c.integration_id === i.id).map((c) => String(c.capability)),
         schedule_cron: (s?.cron as string) ?? null,
         schedule_timezone: (s?.timezone as string) ?? "Africa/Johannesburg",
         schedule_enabled: Boolean(s?.enabled),
       };
     });
+  }
+
+  async getIntegration(id: string) {
+    return (await this.listIntegrations()).find((i) => i.id === id) ?? null;
+  }
+
+  async createIntegration(input: IntegrationCreateInput, actor: Actor) {
+    const db = await this.db;
+    const created = must(
+      await db
+        .from("integrations")
+        .insert({ provider_key: input.provider_key, display_name: input.display_name, category: input.category, website: input.website, status: "candidate" })
+        .select("id")
+        .single(),
+    ) as Row;
+    await this.writeAudit(actor, "integration.create", String(created.id), { provider_key: input.provider_key });
+    return (await this.getIntegration(String(created.id)))!;
+  }
+
+  async updateIntegration(id: string, input: IntegrationUpdateInput, actor: Actor) {
+    const db = await this.db;
+    const { capabilities, ...fields } = input;
+    const updated = must(await db.from("integrations").update(fields).eq("id", id).select("id")) as Row[];
+    if (updated.length === 0) throw new NotAllowedError("Integration not found or not permitted");
+    const current = ((must(await db.from("integration_capabilities").select("capability").eq("integration_id", id)) as Row[]) ?? []).map((c) =>
+      String(c.capability),
+    );
+    const remove = current.filter((c) => !capabilities.includes(c as (typeof capabilities)[number]));
+    const add = capabilities.filter((c) => !current.includes(c));
+    if (remove.length) must(await db.from("integration_capabilities").delete().eq("integration_id", id).in("capability", remove));
+    if (add.length) must(await db.from("integration_capabilities").insert(add.map((capability) => ({ integration_id: id, capability }))));
+    await this.writeAudit(actor, "integration.update", id, { status: input.status, capabilities });
+  }
+
+  async listIntegrationSecrets(integrationId: string): Promise<IntegrationSecretMeta[]> {
+    const db = await this.db;
+    const rows = (must(await db.from("integration_secrets").select("name, hint, set_at, set_by").eq("integration_id", integrationId).order("name")) as Row[]) ?? [];
+    const ids = [...new Set(rows.map((r) => r.set_by).filter(Boolean))] as string[];
+    const people = ids.length ? (((await db.from("profiles").select("id, email").in("id", ids)).data ?? []) as Row[]) : [];
+    return rows.map((r) => ({
+      name: String(r.name),
+      hint: (r.hint as string) ?? null,
+      set_at: String(r.set_at),
+      set_by_label: (people.find((p) => p.id === r.set_by)?.email as string) ?? null,
+    }));
+  }
+
+  private secretError(error: { code?: string; message: string }): never {
+    if (error.code === "42501") throw new NotAllowedError(error.message);
+    throw new ConflictError(error.message);
+  }
+
+  async setIntegrationSecret(integrationId: string, name: string, value: string) {
+    const db = await this.db;
+    // Role, MFA (aal2) and audit are enforced inside the database function; the value goes straight to Vault.
+    const { error } = await db.rpc("set_integration_secret", { p_integration_id: integrationId, p_name: name, p_value: value });
+    if (error) this.secretError(error);
+  }
+
+  async deleteIntegrationSecret(integrationId: string, name: string) {
+    const db = await this.db;
+    const { error } = await db.rpc("delete_integration_secret", { p_integration_id: integrationId, p_name: name });
+    if (error) this.secretError(error);
   }
 
   async listSchedules() {

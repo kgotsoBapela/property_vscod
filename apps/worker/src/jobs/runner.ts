@@ -40,7 +40,10 @@ export async function executeJob(exec: SqlExec, job: SyncJob, log: (msg: string)
 
   let adapter;
   try {
-    adapter = getAdapter(integration.provider_key);
+    // Decrypted only here, in the worker, for the duration of the job. Never logged.
+    const [secrets] = await exec<{ s: Record<string, string> | string }>("select public.get_integration_secrets($1) as s", [job.integration_id]);
+    const credentials = typeof secrets?.s === "string" ? (JSON.parse(secrets.s) as Record<string, string>) : (secrets?.s ?? {});
+    adapter = getAdapter(integration.provider_key, credentials);
   } catch (e) {
     if (!(e instanceof AdapterNotConfiguredError)) throw e;
     await store.appendEvent(job.id, "error", e.message);
