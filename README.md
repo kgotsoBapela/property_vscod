@@ -40,6 +40,7 @@ property, then Comparables, Report and Scenario. In the Sync center, queue an in
    `insert into user_roles (user_id, role) values ('<uuid>', 'super_admin');`. Further users are invited from *Team & roles*.
 4. Configure Supabase Auth (dashboard):
    - **URL Configuration:** Site URL = the app's origin (e.g. `http://localhost:3000`).
+     Set the web app's `NEXT_PUBLIC_SITE_URL` to the same address in production (e.g. on Vercel) so emailed and shared links never point at localhost.
    - **Sign In / Providers:** disable "Allow new users to sign up" (invitation-only); keep Email enabled; TOTP MFA enabled.
    - **Redirect URLs:** add `<origin>/auth/callback` exactly (no query string). Supabase's **default** email templates work as-is:
      invitation and reset links return there and continue to *Set password*.

@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Button, Input, Label } from "@/components/ui/primitives";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { rememberAuthNext } from "./auth-callback";
+import { siteUrl } from "@/lib/env";
 
 function Field(props: React.ComponentProps<typeof Input> & { label: string }) {
   const { label, id, ...rest } = props;
@@ -67,7 +68,7 @@ export function ForgotPasswordForm() {
         // Works with Supabase's default email template: the link returns to /auth/callback (must be an allowed
         // Redirect URL, exactly, with no query string), which then continues to /reset-password.
         rememberAuthNext("/reset-password");
-        await createSupabaseBrowserClient().auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/auth/callback` });
+        await createSupabaseBrowserClient().auth.resetPasswordForEmail(email, { redirectTo: `${siteUrl(window.location.origin)}/auth/callback` });
         setSent(true); // same message whether or not the account exists
       }}
     >

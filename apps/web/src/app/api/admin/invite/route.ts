@@ -2,7 +2,7 @@ import { z } from "zod";
 import { can, inviteUserSchema } from "@propintel/shared";
 import { handle } from "@/lib/auth/api";
 import { getRepository, HttpError, requireCapability } from "@/lib/auth/session";
-import { isDemoMode } from "@/lib/env";
+import { isDemoMode, siteUrl } from "@/lib/env";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 const bodySchema = inviteUserSchema.extend({ delivery: z.enum(["email", "link"]).default("email") });
@@ -21,7 +21,7 @@ export async function POST(req: Request) {
     if (isDemoMode()) throw new HttpError(400, "Invitations require Supabase Auth");
 
     const admin = createSupabaseAdminClient();
-    const origin = new URL(req.url).origin;
+    const origin = siteUrl(new URL(req.url).origin);
     let userId: string;
     let shareLink: string | null = null;
 
